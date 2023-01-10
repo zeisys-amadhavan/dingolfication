@@ -1,0 +1,50 @@
+version: 0.2
+env:
+  exported-variables:
+    - CODEBUILD_BUILD_NUMBER
+    - commit_number
+phases:
+  build:
+    commands:
+      - source=CODEBUILD_SRC_DIR_${SystemComponent}_1_1
+      - cd ${!source}
+      - ls
+      - cd aac
+      - commit_number=$(git rev-parse HEAD | head -c7)
+      - echo $commit_number
+      - branch_name_with_slash=$(git rev-parse --abbrev-ref HEAD)
+      - echo $branch_name_with_slash
+      - branch_name=$(echo $branch_name_with_slash | sed "s~/~-~g")
+      - echo $branch_name
+      - repo_name=$(basename `git config --get remote.origin.url`)
+      - echo $repo_name
+      - repo_provider=$(git config --get remote.origin.url | sed -e 's|^[^/]*//||' -e 's|/.*$||')
+      - echo $repo_provider
+      - pipeline_XID=$PipelineExecutionId
+      - echo pipeline_XID
+      - commit_user=$(git show -s --format='%ae' $commit_number)
+      - echo $commit_user
+      - commit_message_with_slash=$(git show -s --format='%B' $commit_number)
+      - echo $commit_message_with_slash
+      - commit_message=$(echo $commit_message_with_slash | sed "s~/~-~g")
+      - echo $commit_message
+      - git_commit_time_ms=$(git show -s --format=%at $commit_number)
+      - commit_time=$(TZ=America/New_York date -d @$git_commit_time_ms)
+      - echo $commit_time
+      - sed -i "s~#footer_code_content~Code_Repository_Provider=$repo_provider<br>Project_Name=DEVOPS<br>Repo_Name=$repo_name<br>Branch=$branch_name<br>Commit=$commit_number<br>Committer=$commit_user<br>Commit_Message=$commit_message<br>Committed_At=$commit_time~g" src/index.html
+      - build_time=$(TZ=America/New_York date)
+      - echo $build_time
+      - aws_account_id=$(aws sts get-caller-identity --query Account --output text)
+      - sed -i "s~#footer_build_content~Pipeline_Provider=AWS Account $aws_account_id<br>Pipeline_Name=$CODEBUILD_INITIATOR<br>PipelineXID=$pipeline_XID<br>Build=$CODEBUILD_BUILD_NUMBER<br>Image_Repository=$REPOSITORY_URI<br>Built_At=$build_time~g" src/index.html
+      - mkdir binary
+      - cp Dockerfile binary/Dockerfile
+      - cp -r src/* binary/
+      - echo "commit_number=$commit_number" >> source-info.yaml
+      - echo "branch_name=$branch_name" >> source-info.yaml
+      - echo "repo_name=$repo_name" >> source-info.yaml
+      - echo "build_number=$CODEBUILD_BUILD_NUMBER" >> source-info.yaml
+      - cat source-info.yaml
+      - cp source-info.yaml binary/source-info.yaml                
+      - cd binary
+      - zip -r $temp_storage_filename .
+      - aws s3 cp $temp_storage_filename s3://$temp_storage_location/$temp_storage_subdirectory/$temp_storage_filename

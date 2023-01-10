@@ -1,0 +1,39 @@
+version: 0.2
+phases:
+  build:
+    commands:
+      - accountId=$(aws sts get-caller-identity --query Account --output text)
+      - aws s3 cp s3://$temp_storage_location/$PackageStorageSubdirectory/ . --recursive
+      - ls
+      - unzip -d package $PackageStorageFilename
+      - cd package
+      - ls
+      - chmod +x source-info.yaml
+      - source ./source-info.yaml
+      - |
+        if [ -z "$XORole" ]
+        then
+          echo "Deploying into the same account"
+        else
+          echo "Setting cross-account acccess"
+          eval $(aws sts assume-role --role-arn $XORole --role-session-name deploy-stage-access | jq -r '.Credentials | "export AWS_ACCESS_KEY_ID=\(.AccessKeyId)\nexport AWS_SECRET_ACCESS_KEY=\(.SecretAccessKey)\nexport AWS_SESSION_TOKEN=\(.SessionToken)\n"')
+        fi
+      - aws s3 cp s3://$PipelineName-$Env/$PipelineName-$Env.pem $PipelineName-$Env.pem 
+      - chmod 400 $PipelineName-$Env.pem
+      - instanceId=$(aws cloudformation list-stack-resources --stack-name $PipelineName-$Env --query "StackResourceSummaries[?(ResourceType=='AWS::EC2::Instance')].PhysicalResourceId" --output text)
+      - aws ec2 wait instance-status-ok --instance-ids $instanceId;
+      - instanceUrl=$(aws cloudformation describe-stacks --stack-name $PipelineName-$Env --query 'Stacks[].Outputs[?OutputKey==`ExternalUrl`].OutputValue[]' --output text)
+      - instanceIp=$(echo $instanceUrl | sed 's/https\?:\/\///')
+      - instance_id=$(ssh -o StrictHostKeyChecking=no -i $PipelineName-$Env.pem ec2-user@$instanceIp "curl http://169.254.169.254/latest/meta-data/instance-id")
+      - instance_name=$PipelineName-$Env
+      - instance_ami=$(ssh -o StrictHostKeyChecking=no -i $PipelineName-$Env.pem ec2-user@$instanceIp "curl http://169.254.169.254/latest/meta-data/ami-id")
+      - instance_ip=$(ssh -o StrictHostKeyChecking=no -i $PipelineName-$Env.pem ec2-user@$instanceIp "curl http://169.254.169.254/latest/meta-data/local-ipv4")
+      - instance_az=$(ssh -o StrictHostKeyChecking=no -i $PipelineName-$Env.pem ec2-user@$instanceIp "curl http://169.254.169.254/latest/meta-data/placement/availability-zone")            
+      - deployment_date=$(TZ=America/New_York date)
+      - aws_account_id=$(ssh -o StrictHostKeyChecking=no -i $PipelineName-$Env.pem ec2-user@$instanceIp "aws sts get-caller-identity --query Account --output text")
+      - deployment_d="Environment=${Env}<br>Infrastructure_Provider=AWS Account $aws_account_id<br>Infrastructure_Type=EC2+Docker<br>IP_Address=$instance_ip<br>Instance_ID=$instance_id<br>Instance_Name=$instance_name<br>Instance_AMI=$instance_ami<br>Instance_AZ=$instance_az<br>Deployed_At=$deployment_date"
+      - deployment_d="${deployment_d// /_}"
+      - ssh -o StrictHostKeyChecking=no -i $PipelineName-$Env.pem ec2-user@$instanceIp "aws ecr get-login-password --region $AWS_DEFAULT_REGION | sudo docker login --username AWS --password-stdin ${REPOSITORY_URI}"
+      - ssh -o StrictHostKeyChecking=no -i $PipelineName-$Env.pem ec2-user@$instanceIp "sudo docker pull ${REPOSITORY_URI}:${build_number}"
+      - ssh -o StrictHostKeyChecking=no -i $PipelineName-$Env.pem ec2-user@$instanceIp "if [ \"$(sudo docker ps -q -f name=^/${SystemName}-${SystemComponent}$)\" ];  then     sudo docker rm ${SystemName}-${SystemComponent} --force;     sudo docker run -dit -p 80:${SourceContainerPort} --name ${SystemName}-${SystemComponent} --restart always --env deployment_d=\"$deployment_d\" ${REPOSITORY_URI}:${build_number}; else     sudo docker run -dit -p 80:${SourceContainerPort} --name ${SystemName}-${SystemComponent} --restart always --env deployment_d=\"$deployment_d\" ${REPOSITORY_URI}:${build_number}; fi"
+

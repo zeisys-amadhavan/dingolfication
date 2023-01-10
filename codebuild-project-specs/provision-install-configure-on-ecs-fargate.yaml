@@ -1,0 +1,71 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - yum install -y jq
+  build:
+    commands:
+      - source=CODEBUILD_SRC_DIR_${SystemComponent}_1_2
+      - cd ${!source}
+      - ls
+      - aws s3 cp s3://$temp_storage_location/$PackageStorageSubdirectory/ . --recursive
+      - ls
+      - unzip -d package $PackageStorageFilename
+      - cd package
+      - ls
+      - chmod +x source-info.yaml
+      - source ./source-info.yaml
+      - ls
+      - DeploymentSubnets="1,2"
+      - echo $DeploymentSubnets
+      - echo $Vpc
+      - echo $DeploymentStackName
+      - |
+        if [ -z "$XORole" ]
+        then
+          echo "Deploying into the same account"
+        else
+          echo "Setting cross-account acccess"
+          eval $(aws sts assume-role --role-arn $XORole --role-session-name deploy-stage-access | jq -r '.Credentials | "export AWS_ACCESS_KEY_ID=\(.AccessKeyId)\nexport AWS_SECRET_ACCESS_KEY=\(.SecretAccessKey)\nexport AWS_SESSION_TOKEN=\(.SessionToken)\n"')
+        fi
+      - DeploymentSubnets=$(aws ec2 describe-subnets --filter Name=vpc-id,Values=$Vpc --query 'Subnets[?AvailableIpAddressCount>`1` && MapPublicIpOnLaunch==`true`].SubnetId' --output text)
+      - echo $DeploymentSubnets
+      - Subnets="$( echo "$DeploymentSubnets" | sed 's/[[:space:]][[:space:]]*/, /g')"
+      - echo $Subnets
+      - BUILD_NUMBER=$build_number
+      - echo $BUILD_NUMBER
+      - cd ..
+      - cd iac_configuration
+      - cp parameters-template.json parameters.json
+      - NameTagPrefix=ecs-fargate
+      - sed -i  "s/#BuildNumber/$BUILD_NUMBER/g" parameters.json;
+      - sed -i  "s/#PipelineName/$PipelineName/g" parameters.json;
+      - sed -i  "s/#Env/$Env/g" parameters.json;
+      - sed -i  "s/#Vpc/$Vpc/g" parameters.json;
+      - sed -i  "s/#SourcePortNumber/$SourcePortNumber/g" parameters.json;
+      - sed -i  "s/#SecurityGroups/$SecurityGroups/g" parameters.json;
+      - sed -i  "s/#NameTagPrefix/$NameTagPrefix/g" parameters.json;
+      - sed -i  "s~#PermissionsBoundary~$PermissionsBoundary~g" parameters.json;
+      - sed -i  "s/#SystemComponent/$SystemComponent/g" parameters.json;
+      - sed -i  "s/#SystemName/$SystemName/g" parameters.json;
+      - sed -i  "s~#RepositoryUri~$REPOSITORY_URI~g" parameters.json;
+      - sed -i  "s~#Subnets~$Subnets~g" parameters.json;
+      - sed -i  "s~#ContainerCpu~$ContainerCpu~g" parameters.json;
+      - sed -i  "s~#ContainerMemory~$ContainerMemory~g" parameters.json;
+      - sed -i  "s~#DesiredCount~$DesiredCount~g" parameters.json;
+
+      - cat parameters.json; 
+      - cd ..        
+      - |
+        if ! aws cloudformation describe-stacks --stack-name $PipelineName-$Env ; then
+          echo -e "\nStack does not exist, creating ..."
+          aws cloudformation create-stack --stack-name $PipelineName-$Env --template-body file://iac/cloudformation.yaml --parameters file://iac_configuration/parameters.json --capabilities CAPABILITY_NAMED_IAM --tags $tags
+          echo "Waiting for stack to be created ..."
+          aws cloudformation wait stack-create-complete --stack-name $PipelineName-$Env 
+        else
+          echo -e "\nStack exists, attempting update ..."
+          aws cloudformation update-stack --stack-name $PipelineName-$Env --template-body file://iac/cloudformation.yaml --parameters file://iac_configuration/parameters.json --capabilities CAPABILITY_NAMED_IAM --tags $tags
+          echo "Waiting for stack to be updated ..."
+          aws cloudformation wait stack-update-complete --stack-name $PipelineName-$Env
+        fi 

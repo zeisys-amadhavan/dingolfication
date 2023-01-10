@@ -1,0 +1,13 @@
+version: 0.2
+phases:
+  build:
+    commands:
+      - aws s3 cp s3://$temp_storage_location/$BinaryStorageSubdirectory/ . --recursive
+      - ls
+      - unzip -d binary $BinaryStorageFilename
+      - cd binary
+      - ls
+      - zip -r $temp_storage_filename .
+      - aws s3 cp $temp_storage_filename s3://$temp_storage_location/$temp_storage_subdirectory/$temp_storage_filename
+ 
+

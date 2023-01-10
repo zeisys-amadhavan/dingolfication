@@ -1,0 +1,94 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - yum install -y jq
+  build:
+    commands:
+      - source=CODEBUILD_SRC_DIR_${SystemComponent}_1_2
+      - cd ${!source}
+      - ls
+      - accountId=$(aws sts get-caller-identity --query Account --output text)
+      - aws s3 cp s3://$temp_storage_location/$PackageStorageSubdirectory/ . --recursive
+      - ls
+      - unzip -d package $PackageStorageFilename
+      - cd package
+      - ls
+      - chmod +x source-info.yaml
+      - source ./source-info.yaml
+      - ls
+      - DeploymentSubnets="1,2"
+      - echo $DeploymentSubnets
+      - echo $Vpc
+      - echo $DeploymentStackName
+      - DeploymentSubnets=$(aws ec2 describe-subnets --filter Name=vpc-id,Values=$Vpc --query 'Subnets[?AvailableIpAddressCount>`1` && MapPublicIpOnLaunch==`true`].SubnetId' --output text)
+      - echo $DeploymentSubnets
+      - Subnets="$( echo "$DeploymentSubnets" | sed 's/[[:space:]][[:space:]]*/, /g')"
+      - echo $Subnets
+      - BUILD_NUMBER=$build_number
+      - echo $BUILD_NUMBER
+      - cd ..
+      - cd iac
+      - zip function.zip index.sh
+      - aws s3 cp function.zip s3://$temp_storage_location/$Env/triggers/function.zip
+      - cd ..
+      - cd iac_configuration
+      - cp parameters-template.json parameters.json
+      - NameTagPrefix=ecs-fargate
+      - sed -i  "s/#BuildNumber/$BUILD_NUMBER/g" parameters.json;
+      - sed -i  "s/#PipelineName/$PipelineName/g" parameters.json;
+      - sed -i  "s/#Env/$Env/g" parameters.json;
+      - sed -i  "s/#Vpc/$Vpc/g" parameters.json;
+      - sed -i  "s/#SourcePortNumber/$SourcePortNumber/g" parameters.json;
+      - sed -i  "s/#SecurityGroups/$SecurityGroups/g" parameters.json;
+      - sed -i  "s/#NameTagPrefix/$NameTagPrefix/g" parameters.json;
+      - sed -i  "s~#PermissionsBoundary~$PermissionsBoundary~g" parameters.json;
+      - sed -i  "s/#SystemComponent/$SystemComponent/g" parameters.json;
+      - sed -i  "s/#SystemName/$SystemName/g" parameters.json;
+      - sed -i  "s~#RepositoryUri~$REPOSITORY_URI~g" parameters.json;
+      - sed -i  "s~#Subnets~$Subnets~g" parameters.json;
+      - sed -i  "s~#ContainerCpu~$ContainerCpu~g" parameters.json;
+      - sed -i  "s~#ContainerMemory~$ContainerMemory~g" parameters.json;
+      - sed -i  "s~#DesiredCount~$DesiredCount~g" parameters.json;
+      - sed -i  "s~#ConfigRefreshLambdaSourceBucket~$temp_storage_location~g" parameters.json;
+      - sed -i  "s~#ConfigRefreshLambdaSourceObjectKey~$Env/triggers/function.zip~g" parameters.json;
+      - sed -i  "s~#ConfigRefreshLambdaMemory~1024~g" parameters.json;
+      - sed -i  "s~#PrivateConfigRefreshLambda~$PrivateConfigRefreshLambda~g" parameters.json;
+
+      - cat parameters.json; 
+      - cd ..
+      - |
+        if ! aws cloudformation describe-stacks --stack-name $PipelineName-$Env ; then
+          echo -e "\nStack does not exist, creating ..."
+          aws cloudformation create-stack --stack-name $PipelineName-$Env --template-body file://iac/cloudformation.yaml --parameters file://iac_configuration/parameters.json --capabilities CAPABILITY_NAMED_IAM
+          echo "Waiting for stack to be created ..."
+          aws cloudformation wait stack-create-complete --stack-name $PipelineName-$Env 
+        else
+          echo -e "\nStack exists, attempting update ..."
+          aws cloudformation update-stack --stack-name $PipelineName-$Env --template-body file://iac/cloudformation.yaml --parameters file://iac_configuration/parameters.json --capabilities CAPABILITY_NAMED_IAM
+          echo "Waiting for stack to be updated ..."
+          aws cloudformation wait stack-update-complete --stack-name $PipelineName-$Env
+        fi 
+      - ConfigS3BucketName=$(aws cloudformation describe-stacks --stack-name $PipelineName-$Env --query "Stacks[0].Outputs[?OutputKey=='ConfigS3BucketName'].OutputValue" --output text)
+      - cd iac
+      #- cp https-trigger-template.sh config-refresh-trigger.sh
+      - touch trigger_get_credentials
+      - touch trigger_get_source
+      - touch trigger_pack
+      - echo "username=\$(aws secretsmanager get-secret-value --secret-id $ConfigSourceCredentialSecret --query SecretString --output text --region $ConfigSourceCredentialSecretRegion | jq -rR 'fromjson? | .username')" >> trigger_get_credentials
+      - echo "password=\$(aws secretsmanager get-secret-value --secret-id $ConfigSourceCredentialSecret --query SecretString --output text --region $ConfigSourceCredentialSecretRegion | jq -rR 'fromjson? | .password')" >> trigger_get_credentials
+      - echo "rm -rf $ConfigSourceRepoName" >> trigger_get_source
+      - echo "git clone https://\$username:\$password@$ConfigSourceProvider/$ConfigSourceProject/$ConfigSourceRepoName.git" >> trigger_get_source
+      - echo "cd $ConfigSourceRepoName" >> trigger_pack
+      - echo "ls" >> trigger_pack
+      - echo "aws s3 cp . s3://$ConfigS3BucketName --recursive" >> trigger_pack
+      - echo "cd .." >> trigger_pack
+      - awk '/+trigger_get_credentials/{system("cat trigger_get_credentials");next}1' https-trigger-template.sh | awk '/+trigger_get_source/{system("cat trigger_get_source");next}1' | awk '/+trigger_pack/{system("cat trigger_pack");next}1' > config-refresh-trigger.sh
+      - cat config-refresh-trigger.sh
+      - rm trigger_get_credentials trigger_get_source trigger_pack      
+      - aws s3 cp config-refresh-trigger.sh s3://$ConfigS3BucketName/configrefresh/config-refresh-trigger.sh
+      - cd ..
+      - ConfigRefreshLambdaApiEndpoint=$(aws cloudformation describe-stacks --stack-name $PipelineName-$Env --query "Stacks[0].Outputs[?OutputKey=='ConfigRefreshLambdaApiEndpoint'].OutputValue" --output text)  
+      - echo "Webhook URL for ConfigRefresh is $ConfigRefreshLambdaApiEndpoint?s3bucket=$ConfigS3BucketName&s3objectkey=configrefresh%2Fconfig-refresh-trigger.sh" >> configrefreshurl
+      - aws s3 cp configrefreshurl s3://$ConfigS3BucketName/configrefresh/configrefreshurl

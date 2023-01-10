@@ -1,0 +1,15 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - yum install -y jq
+      - npm install -g anypoint-cli@latest
+  build:
+    commands:
+      #- MulesoftAccountSecret=$(aws secretsmanager get-secret-value --secret-id $EnvironmentSecret --query SecretString --output text | jq -rR 'fromjson? | .ArgOne')
+      - anypoint_username=$(aws secretsmanager get-secret-value --secret-id $MulesoftAccountSecret --query SecretString --output text | jq -rR 'fromjson? | .username')
+      - anypoint_password=$(aws secretsmanager get-secret-value --secret-id $MulesoftAccountSecret --query SecretString --output text | jq -rR 'fromjson? | .password')
+      - export ANYPOINT_USERNAME=$anypoint_username
+      - export ANYPOINT_PASSWORD=$anypoint_password
+      - ls

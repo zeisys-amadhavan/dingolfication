@@ -1,0 +1,53 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - yum install -y jq
+  build:
+    commands:
+      - ls
+      - cp pac/ses-templates/approval-message-template.json approval-message.json
+      - cp pac/ses-templates/destination-template.json destination.json
+      - echo $PipelineExecutionId
+      - echo $sender_email_address
+      - echo $PipelineName
+      - echo $SystemComponent
+      - echo $Env
+      - echo $ApproveToEnv
+      - echo $DeploymentStackName
+      - |
+        if [ -z "$XORole" ]
+        then
+          echo "Deploying into the same account"
+        else
+          echo "Setting cross-account acccess"
+          eval $(aws sts assume-role --role-arn $XORole --role-session-name deploy-stage-access | jq -r '.Credentials | "export AWS_ACCESS_KEY_ID=\(.AccessKeyId)\nexport AWS_SECRET_ACCESS_KEY=\(.SecretAccessKey)\nexport AWS_SESSION_TOKEN=\(.SessionToken)\n"')
+        fi
+      - TestUrl=$(aws cloudformation describe-stacks --stack-name $PipelineName-$Env --query 'Stacks[].Outputs[?OutputKey==`ExternalUrl`].OutputValue[]' --output text)
+      - echo $TestUrl
+      - export AWS_ACCESS_KEY_ID=
+      - export AWS_SECRET_ACCESS_KEY=
+      - export AWS_SESSION_TOKEN=
+      - ApprovalApiName=$(aws cloudformation list-stack-resources --stack-name $PipelineStackName --query "StackResourceSummaries[?(ResourceType=='AWS::ApiGateway::RestApi')].PhysicalResourceId" --output text)
+      - ApprovalApiStg=$(aws cloudformation list-stack-resources --stack-name $PipelineStackName --query "StackResourceSummaries[?(ResourceType=='AWS::ApiGateway::Stage')].PhysicalResourceId" --output text)
+      - ApprovalStg=approve-$Env
+      - ApproveUrl="https://$ApprovalApiName.execute-api.$AWS_DEFAULT_REGION.amazonaws.com/$ApprovalApiStg/pipeline-approval?action=Approved\&pipeline=$PipelineName\&stage=$ApprovalStg\&approval_action=promote-$Env\&pipelineexecutionid=$PipelineExecutionId"
+      - RejectUrl="https://$ApprovalApiName.execute-api.$AWS_DEFAULT_REGION.amazonaws.com/$ApprovalApiStg/pipeline-approval?action=Rejected\&pipeline=$PipelineName\&stage=$ApprovalStg\&approval_action=promote-$Env\&pipelineexecutionid=$PipelineExecutionId"
+      - echo $ApproveUrl
+      - echo $RejectUrl
+      - echo $ApproverEmail
+      - |
+        sed -i  "s~#PipelineXID~$PipelineExecutionId~g" approval-message.json;
+        sed -i  "s~#To~$ApproverEmail~g" approval-message.json;
+        sed -i  "s~#PipelineName~$PipelineName~g" approval-message.json;
+        sed -i  "s~#SystemComponent~$SystemComponent~g" approval-message.json;
+        sed -i  "s~#Env~$Env~g" approval-message.json;
+        sed -i  "s~#TestUrl~$TestUrl~g" approval-message.json;
+        sed -i  "s~#NextEnv~$ApproveToEnv~g" approval-message.json;
+        sed -i  "s~#ApproveUrl~$ApproveUrl~g" approval-message.json;
+        sed -i  "s~#RejectUrl~$RejectUrl~g" approval-message.json;
+        sed -i  "s~#To~$ApproverEmail~g" destination.json;
+      - cat approval-message.json; 
+      - cat destination.json;
+      - aws ses send-email --from $sender_email_address --destination file://destination.json --message file://approval-message.json

@@ -1,0 +1,57 @@
+version: 0.2
+phases:
+  install:
+    runtime-versions:
+      nodejs: 12
+    commands:
+      - whoami
+      - npm --version
+      - node --version
+      - npm install -g npm@7.24
+      - n 16.10.0
+      - npm --version
+      - node --version      
+      - yum install -y jq
+      - npm install -g selenium-side-runner
+      - wget https://chromedriver.storage.googleapis.com/90.0.4430.24/chromedriver_linux64.zip
+      - unzip chromedriver_linux64.zip
+      - cp chromedriver $TestDirectory/chromedriver
+      - mv chromedriver /usr/bin/chromedriver   
+  build:
+    commands:
+      - ls
+      - source=CODEBUILD_SRC_DIR_${SystemComponent}_1_3
+      - cd ${!source}      
+      - ls
+      - cd tac
+      - ls
+      - pwd
+      - cd $functional
+      - |
+        if [ -z "$XORole" ]
+        then
+          echo "Deploying into the same account"
+        else
+          echo "Setting cross-account acccess"
+          eval $(aws sts assume-role --role-arn $XORole --role-session-name deploy-stage-access | jq -r '.Credentials | "export AWS_ACCESS_KEY_ID=\(.AccessKeyId)\nexport AWS_SECRET_ACCESS_KEY=\(.SecretAccessKey)\nexport AWS_SESSION_TOKEN=\(.SessionToken)\n"')
+        fi
+      - instanceId=$(aws cloudformation list-stack-resources --stack-name $PipelineName-$Env --query "StackResourceSummaries[?(ResourceType=='AWS::EC2::Instance')].PhysicalResourceId" --output text)
+      - |
+        if [ -z "$instanceId" ]
+        then
+          Service=$(aws cloudformation list-stack-resources --stack-name $PipelineName-$Env --query "StackResourceSummaries[?(ResourceType=='AWS::ECS::Service')].PhysicalResourceId" --output text)
+          Cluster=$(aws cloudformation list-stack-resources --stack-name $PipelineName-$Env --query "StackResourceSummaries[?(ResourceType=='AWS::ECS::Cluster')].PhysicalResourceId" --output text)
+          echo $Cluster $Service
+          echo -e "Checking if deployment infrastructure setup was successful"
+          aws ecs wait services-stable --cluster $Cluster --services $Service;
+        else
+          echo $instanceId
+          echo -e "Checking if deployment infrastructure setup was successful"
+          aws ec2 wait instance-status-ok --instance-ids $instanceId;
+        fi  
+      - |
+        echo -e "Checking if deployment installation was successful"
+        export TestIp=$(aws cloudformation describe-stacks --stack-name $PipelineName-$Env --query 'Stacks[].Outputs[?OutputKey==`ExternalUrl`].OutputValue[]' --output text); 
+        echo "URL to test is $TestIp";
+        selenium-side-runner --output-directory . --base-url $TestIp -c "browserName=chrome goog:chromeOptions.args=[disable-infobars, headless, no-sandbox]" --debug --timeout 15000 *.side
+      - ls

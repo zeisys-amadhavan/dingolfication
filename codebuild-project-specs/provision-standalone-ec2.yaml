@@ -1,0 +1,41 @@
+version: 0.2
+phases:
+  build:
+    commands:
+      - |
+        if [ -z "$XORole" ]
+        then
+          echo "Deploying into the same account"
+        else
+          echo "Setting cross-account acccess"
+          eval $(aws sts assume-role --role-arn $XORole --role-session-name deploy-stage-access | jq -r '.Credentials | "export AWS_ACCESS_KEY_ID=\(.AccessKeyId)\nexport AWS_SECRET_ACCESS_KEY=\(.SecretAccessKey)\nexport AWS_SESSION_TOKEN=\(.SessionToken)\n"')
+        fi
+      - source=CODEBUILD_SRC_DIR_${SystemComponent}_1_2
+      - cd ${!source}
+      - ls
+      - cd iac_configuration
+      - cp parameters-template.json parameters.json
+      - sed -i  "s~#PermissionsBoundary~$PermissionsBoundary~g" parameters.json
+      - sed -i  "s~#AMIId~$AMIId~g" parameters.json
+      - sed -i  "s~#InstanceType~$InstanceType~g" parameters.json
+      - sed -i  "s~#InstanceVolumeSizeInGB~$InstanceVolumeSizeInGB~g" parameters.json
+      - sed -i  "s~#SubnetId~$SubnetId~g" parameters.json
+      - sed -i  "s~#SecurityGroupId~$SecurityGroupId~g" parameters.json
+      - sed -i  "s~#Private~$Private~g" parameters.json
+      - cd ..
+      - |
+        if ! aws cloudformation describe-stacks --stack-name $PipelineName-$Env ; then
+          echo -e "\nStack does not exist, creating ..."
+          aws cloudformation create-stack --stack-name $PipelineName-$Env --template-body file://iac/cloudformation.yaml --parameters file://iac_configuration/parameters.json --capabilities CAPABILITY_NAMED_IAM --tags $tags
+          echo "Waiting for stack to be created ..."
+          aws cloudformation wait stack-create-complete --stack-name $PipelineName-$Env
+        else
+          echo -e "\nStack exists, attempting update ..."
+          aws cloudformation update-stack --stack-name $PipelineName-$Env --template-body file://iac/cloudformation.yaml --parameters file://iac_configuration/parameters.json --capabilities CAPABILITY_NAMED_IAM --tags $tags
+          echo "Waiting for stack to be updated ..."
+          aws cloudformation wait stack-update-complete --stack-name $PipelineName-$Env
+        fi 
+
+
+
+

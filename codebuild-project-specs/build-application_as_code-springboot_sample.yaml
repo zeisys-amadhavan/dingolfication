@@ -1,0 +1,43 @@
+version: 0.2
+env:
+  exported-variables:
+    - CODEBUILD_BUILD_NUMBER
+    - commit_number
+phases:
+  build:
+    commands:
+      - export CODEARTIFACT_AUTH_TOKEN=`aws codeartifact get-authorization-token --domain demo-maven-repo --domain-owner 815497997234 --query authorizationToken --output text`
+      - source=CODEBUILD_SRC_DIR_${SystemComponent}_1_1
+      - cd ${!source}
+      - ls
+      - cd aac
+      - commit_number=$(git rev-parse HEAD | head -c7)
+      - branch_name_with_slash=$(git rev-parse --abbrev-ref HEAD)
+      - echo $branch_name_with_slash
+      - branch_name=$(echo $branch_name_with_slash | sed "s~/~-~g")
+      - repo_name=$(basename `git config --get remote.origin.url`)
+      - |
+        if [ -f "settings.xml" ]; then
+          cp ./settings.xml /root/.m2/settings.xml
+        fi
+      - mvn package
+      - ls
+      - cd target
+      - ls
+      - cd ..
+      - mkdir binary
+      - |
+        if [ -f "entrypoint.sh" ]; then
+          cp entrypoint.sh binary/entrypoint.sh
+        fi      
+      - cp Dockerfile binary/Dockerfile
+      - cp -r target binary/
+      - echo "commit_number=$commit_number" >> source-info.yaml
+      - echo "branch_name=$branch_name" >> source-info.yaml
+      - echo "repo_name=$repo_name" >> source-info.yaml
+      - echo "build_number=$CODEBUILD_BUILD_NUMBER" >> source-info.yaml
+      - cat source-info.yaml
+      - cp source-info.yaml binary/source-info.yaml                
+      - cd binary
+      - zip -r $temp_storage_filename .
+      - aws s3 cp $temp_storage_filename s3://$temp_storage_location/$temp_storage_subdirectory/$temp_storage_filename

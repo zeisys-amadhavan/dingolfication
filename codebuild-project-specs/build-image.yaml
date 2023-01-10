@@ -1,0 +1,29 @@
+version: 0.2
+phases:
+  build:
+    commands:
+      - aws s3 cp s3://$temp_storage_location/$PackageStorageSubdirectory/ . --recursive
+      - ls
+      - unzip -d package $PackageStorageFilename
+      - cd package
+      - ls
+      - chmod +x source-info.yaml
+      - source ./source-info.yaml
+      - dockerhub_login=$(aws secretsmanager get-secret-value --secret-id dockerhub --region us-east-1 --query SecretString --output text | jq -r .dockerhub_login)
+      - dockerhub_password=$(aws secretsmanager get-secret-value --secret-id dockerhub --region us-east-1 --query SecretString --output text | jq -r .dockerhub_password)
+      - docker login --username $dockerhub_login --password $dockerhub_password
+      - docker build --tag $REPOSITORY_URI:$PipelineExecutionId .
+      - docker image ls -a
+      - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $REPOSITORY_URI
+      - docker push $REPOSITORY_URI:$PipelineExecutionId
+      - docker tag $REPOSITORY_URI:$PipelineExecutionId $REPOSITORY_URI:$repo_name
+      - docker push $REPOSITORY_URI:$repo_name
+      - docker tag $REPOSITORY_URI:$PipelineExecutionId $REPOSITORY_URI:$branch_name
+      - docker push $REPOSITORY_URI:$branch_name
+      - docker tag $REPOSITORY_URI:$PipelineExecutionId $REPOSITORY_URI:$commit_number
+      - docker push $REPOSITORY_URI:$commit_number
+      - docker tag $REPOSITORY_URI:$PipelineExecutionId $REPOSITORY_URI:$build_number
+      - docker push $REPOSITORY_URI:$build_number
+      - docker tag $REPOSITORY_URI:$PipelineExecutionId $REPOSITORY_URI:latest
+      - docker push $REPOSITORY_URI:latest
+      

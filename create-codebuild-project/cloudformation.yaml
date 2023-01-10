@@ -1,0 +1,139 @@
+Parameters:
+  0SystemName:
+    Type: String
+    Description: Name of system being deployed
+  1KMSKeyArn:
+    Type: String
+    Description: Arn of KMS Key to use for artifacts
+  2CodeBuildRole:
+    Type: String
+    Description: Role that the CodeBuild Project can assume
+  3RepositoryUri:
+    Type: String
+    Description: Repository to store output image artifacts in
+  4CodeBuildContainerImage:
+    Type: String
+    Description: Image for the container in which CodeBuild Project is executed 
+  5CodeBuildComputeType:
+    Type: String
+    Description: Compute Type to use for the CodeBuild Project
+  6CodeBuildProjectName:
+    Type: String
+    Description: Name to use with the CodeBuild Project
+  7SourceType:
+    Type: String
+    Description: Type of source that this CodeBuild Project accepts  
+  8ArtifactType:
+    Type: String
+    Description: Type of artifact that this CodeBuild Project generates      
+  9BuildSpecFile:
+    Type: String
+    Description: File within the source that contains the buildspec 
+  10PrivateBuildProject:
+    Type: String
+    Description: true/false based on if CodeBuild Project is to run within a VPC
+  11VpcId:
+    Type: String
+    Description: VPC within which the CodeBuild Project is to run
+  12SubnetIds:
+    Type: CommaDelimitedList
+    Description: Subnets within which the CodeBuild Project is to run
+  13SecurityGroupIds:
+    Type: CommaDelimitedList
+    Description: SecurityGroups behind which the CodeBuild Project is to run    
+  14PipelineStackName:
+    Type: String
+    Description: Stack name of the pipeline 
+  15PipelineName:
+    Type: String
+    Description: Name of the pipeline
+  16SystemComponent:
+    Type: String
+    Description: Name of system component being deployed
+  17TempStorageLocation:
+    Type: String
+    Description: Location to store post execution state and products
+  18TempStoragePath:
+    Type: String
+    Description: Location path to store post execution state and products
+  19TempStorageFilename:
+    Type: String
+    Description: Location filename to store post execution state and products 
+  20SenderEmailAddress:
+    Type: String
+    Description: Environment Name  
+  21XORoleArn:
+    Type: String
+    Description: Cross account role ARN
+    Default: NA     
+  22InfrastructureTags:
+    Type: String
+    Description: Infrastructure Tags      
+Conditions:
+  PrivateBuildProject: !Equals 
+    - !Ref 10PrivateBuildProject
+    - true
+  
+Resources:
+  CodeBuildBuildProject:
+    Type: 'AWS::CodeBuild::Project'
+    Properties:
+      Name: !Ref 6CodeBuildProjectName
+      ServiceRole: !Ref 2CodeBuildRole    
+      Artifacts:
+        Type: !Ref 8ArtifactType
+      EncryptionKey: !Ref 1KMSKeyArn
+      Source:
+        Type: !Ref 7SourceType
+        BuildSpec: !Ref 9BuildSpecFile
+      Environment:
+        ComputeType: !Ref 5CodeBuildComputeType
+        Image: !Ref 4CodeBuildContainerImage
+        PrivilegedMode: true
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - Name: REPOSITORY_URI
+            Value: !Ref 3RepositoryUri
+          - Name: SystemName
+            Value: !Ref 0SystemName
+          - Name: PipelineStackName
+            Value: !Ref 14PipelineStackName 
+          - Name: PipelineName
+            Value: !Ref 15PipelineName 
+          - Name: SystemComponent
+            Value: !Ref 16SystemComponent 
+          - Name: temp_storage_location
+            Value: !Ref 17TempStorageLocation 
+          - Name: temp_storage_subdirectory
+            Value: !Ref 18TempStoragePath 
+          - Name: temp_storage_filename
+            Value: !Ref 19TempStorageFilename 
+          - Name: sender_email_address
+            Value: !Ref 20SenderEmailAddress
+          - Name: is_private
+            Value: !Ref 10PrivateBuildProject  
+          - Name: xo_role_arn
+            Value: !Ref 21XORoleArn
+          - Name: tags
+            Value: !Ref 22InfrastructureTags              
+      VpcConfig:
+        SecurityGroupIds: 
+          Fn::If:
+          - PrivateBuildProject
+          - Ref: 13SecurityGroupIds
+          - Ref: AWS::NoValue
+        Subnets: 
+          Fn::If:
+          - PrivateBuildProject
+          - Ref: 12SubnetIds
+          - Ref: AWS::NoValue
+        VpcId: 
+          Fn::If:
+          - PrivateBuildProject
+          - Ref: 11VpcId
+          - Ref: AWS::NoValue
+                                                   
+Outputs:
+  CodeBuildProjectName:
+    Value: !Ref CodeBuildBuildProject
+    Description: Name of CodeBuild Project

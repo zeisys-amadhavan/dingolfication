@@ -1,0 +1,30 @@
+[
+  {
+    "ParameterKey": "1S3SourceBucket",
+    "ParameterValue": "#1S3SourceBucket"
+  },
+  {
+    "ParameterKey": "2S3SourceObjectKey",
+    "ParameterValue": "#2S3SourceObjectKey"
+  },
+  {
+    "ParameterKey": "3LambdaMemory",
+    "ParameterValue": "1024"
+  },
+  {
+    "ParameterKey": "4LambdaSubnets",
+    "ParameterValue": "#4LambdaSubnets"
+  },
+  {
+    "ParameterKey": "5LambdaSecurityGroup",
+    "ParameterValue": "#5LambdaSecurityGroup"
+  },
+  {
+    "ParameterKey": "6PermissionsBoundaryArn",
+    "ParameterValue": "#6PermissionsBoundaryArn"
+  },
+  {
+    "ParameterKey": "7PrivateLambda",
+    "ParameterValue": "#7PrivateLambda"
+  }
+]

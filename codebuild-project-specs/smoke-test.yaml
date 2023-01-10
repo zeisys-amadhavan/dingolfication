@@ -1,0 +1,50 @@
+version: 0.2
+phases:
+  install:
+    commands:
+      - yum install -y jq     
+  build:
+    commands:
+      - ls
+      - source=CODEBUILD_SRC_DIR_${SystemComponent}_1_3
+      - cd ${!source}
+      - ls
+      - cd tac
+      - cp smoke/smoke-test-0001.sh smoke-test.sh
+      - |
+        if [ -z "$XORole" ]
+        then
+          echo "Deploying into the same account"
+        else
+          echo "Setting cross-account acccess"
+          eval $(aws sts assume-role --role-arn $XORole --role-session-name deploy-stage-access | jq -r '.Credentials | "export AWS_ACCESS_KEY_ID=\(.AccessKeyId)\nexport AWS_SECRET_ACCESS_KEY=\(.SecretAccessKey)\nexport AWS_SESSION_TOKEN=\(.SessionToken)\n"')
+        fi
+      - instanceId=$(aws cloudformation list-stack-resources --stack-name $PipelineName-$Env --query "StackResourceSummaries[?(ResourceType=='AWS::EC2::Instance')].PhysicalResourceId" --output text)
+      - |
+        if [ -z "$instanceId" ]
+        then
+          Service=$(aws cloudformation list-stack-resources --stack-name $PipelineName-$Env --query "StackResourceSummaries[?(ResourceType=='AWS::ECS::Service')].PhysicalResourceId" --output text)
+          Cluster=$(aws cloudformation list-stack-resources --stack-name $PipelineName-$Env --query "StackResourceSummaries[?(ResourceType=='AWS::ECS::Cluster')].PhysicalResourceId" --output text)
+          echo $Cluster $Service
+          echo -e "Checking if deployment infrastructure setup was successful"
+          aws ecs wait services-stable --cluster $Cluster --services $Service;
+        else
+          echo $instanceId
+          echo -e "Checking if deployment infrastructure setup was successful"
+          aws ec2 wait instance-status-ok --instance-ids $instanceId;
+        fi  
+      - |
+        echo -e "Checking if deployment installation was successful"
+        export SMOKEIP=$(aws cloudformation describe-stacks --stack-name $PipelineName-$Env --query 'Stacks[].Outputs[?OutputKey==`ExternalUrl`].OutputValue[]' --output text); 
+        echo "URL to test is $SMOKEIP";
+        status=0;
+        status1=$(curl -I $SMOKEIP 2>/dev/null  | head -n 1 | cut -d' ' -f2);
+        echo $status1;
+        timeout 300 bash -c 'while [[ $status -ne 200 ]]; do sleep 5; status=$(curl -I $SMOKEIP 2> /dev/null  | head -n 1 | cut -d$" " -f2); echo $status; done' || { echo -e "Deployment installation timed out unsuccessfully"; exit 1; }
+        echo -e "Deployment installation succeeded"
+      - | 
+        echo -e "Checking if deployment configuration on $SMOKEIP was successful";
+        chmod +x smoke-test.sh;
+        curl "$SMOKEIP";
+        . $PWD/smoke-test.sh; smoke_url_ok "$SMOKEIP"; smoke_assert_body "$AssertInBody"; smoke_report;
+        echo -e "Deployment configuration succeeded"
